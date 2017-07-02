@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+
+import util
+import libtags
+import client_interface
+
+def report_header(text):
+    print()
+    print(text)
+    print("-" * len(text))
+
+def collection_report(collection_xml, filelist, args):
+    collection = util.parse_collection_xml(collection_xml)
+
+    # Map rids to DiscogsRelease objects for easy retrieval
+    release_map = {}
+
+    # Map rids to number of copies in collection if > 1
+    duplicate_collection = {}
+
+    # List of rids in Discogs collection, with duplicates filtered
+    collection_rid_list = []
+
+    # Map rid to a list of tracks recorded for that release
+    file_map = {}
+
+    # List of rids found in recordings not in Discogs collection
+    not_in_collection = []
+
+    # List of AudioFile objects that appear to be duplicates
+    duplicate_files = []
+
+    # Build up Discogs collection, noting duplicates
+    for ci in collection:
+        rid = ci.releaseid
+
+        if rid not in release_map:
+            release_map[rid] = client_interface.DiscogsRelease(ci.releaseid)
+            if verbose:
+                print(release_map[rid])
+
+        if rid in collection_rid_list:
+            if rid not in duplicate_collection:
+                duplicate_collection[rid] = 2
+            else:
+                duplicate_collection[rid] = duplicate_collection[rid] + 1
+        else:
+            collection_rid_list.append(rid)
+    collection_rid_set = set(collection_rid_list)
+
+    # Example the files that we found
+    for af in filelist:
+        track = af.getTrack()
+
+        index = track.getTrackNumber() - 1
+        release = track.getRelease()
+        rid = release.getId()
+
+        if rid not in release_map:
+            release_map[rid] = release
+            not_in_collection.append(af)
+
+        if rid not in file_map:
+            file_map[rid] = [index]
+        else:
+            if index in file_map[rid]:
+                duplicate_files.append(af)
+            else:
+                file_map[rid].append(index)
+
+    file_rid_set = set(file_map.keys())
+
+    if args.all_reports or args.missing:
+        report_header("Tracks that were found locally but not in Discogs collection")
+        for af in not_in_collection:
+            print((af.getFilename(), af.getTrack()))
+
+    if args.all_reports or args.discogs_missing:
+        report_header("Releases in Discogs not found locally")
+        print(file_rid_set)
+        to_record = collection_rid_set - file_rid_set
+        names = sorted(["%s %s" % (release_map[rid].getYear(), str(release_map[rid]))
+                 for rid in to_record])
+        for n in names:
+            print(n)
+
+    if args.all_reports or args.partially_recorded:
+        report_header("Partially recorded releases")
+        partially_recorded = []
+        for rid, tracks in file_map.items():
+            release = release_map[rid]
+            release_tracks = set(range(release.getTotalTracks()))
+            tracks_set = set(tracks)
+            missing_tracks = release_tracks - tracks_set
+            if missing_tracks:
+                partially_recorded.append("%s missing %s" % (release_map[rid],
+                        [i + i for i in missing_tracks]))
+
+        partially_recorded.sort()
+        for n in partially_recorded:
+            print(n)
+
+
+parser = argparse.ArgumentParser(
+        description="Tool to work with music collection metadata")
+parser.add_argument("-n", "--dry-run", action="store_true",
+        help="Don't make any changes to any files, just show what would be done")
+parser.add_argument("basedirs", metavar="DIRECTORY", type=str, nargs="+",
+        help="Base directories to recursively search for media")
+parser.add_argument("-u", "--update-metadata", action="store_true",
+        help="For all found media, refresh metadata/images from Discogs")
+parser.add_argument("-c", "--collection",
+        help="CSV exported Discogs collection, which will generate a report of releases that have been fully, partially, and not recorded")
+parser.add_argument("-a", "--all-reports", action="store_true",
+        help="Output all reports")
+parser.add_argument("-M", "--missing", action="store_true",
+        help="Report tracks locally not found in Discogs collection")
+parser.add_argument("-D", "--discogs-missing",  action="store_true",
+        help="Report releases in Discogs collection not found locally")
+parser.add_argument("-P", "--partially-recorded", action="store_true",
+        help="Report releases partially recorded")
+parser.add_argument("-v", "--verbose", action="store_true",
+        help="Output diagnostic messages")
+
+args = parser.parse_args(sys.argv[1:])
+verbose = args.verbose
+
+filelist = []
+for basedir in args.basedirs:
+    print(("Scanning", basedir))
+    filelist.extend(util.get_audio_files(basedir))
+
+aflist = []
+for f in filelist:
+    if verbose:
+        print(f)
+    try:
+        aflist.append(libtags.AudioFile(f))
+    except client_interface.ClientException as ce:
+        print(("Skipping %s: %s" % (f, ce)))
+    except libtags.TagsException as te:
+        print(("Skipping %s: %s" % (f, te)))
+
+
+if args.update_metadata:
+    for af in aflist:
+        print(("Updating", af.getTrack()))
+        if not args.dry_run:
+            af.commit()
+        else:
+            print(("Would have updated", af))
+
+if args.collection:
+    collection_report(args.collection, aflist, args)
+

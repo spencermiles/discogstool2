@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+
+import glob
+import argparse
+import client_interface
+import re
+import sys
+import os
+import time
+import libtags
+import tempfile
+import shutil
+import subprocess
+
+fregex = re.compile(r"([0-9]+)(([a-zA-Z)+[0-9]*)|[.]([a-zA-Z0-9. ]+))[.]([a-zA-Z]+)$")
+pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
+
+class ConversionException(Exception):
+    pass
+
+def process_file(path, basedir, track):
+    ext = "." + path.rsplit(".", 1)[1]
+    fo, tmpfil = tempfile.mkstemp(suffix=ext)
+    os.close(fo)
+    shutil.copy(path, tmpfil)
+    af = libtags.AudioFile(tmpfil, track)
+    af.commit()
+    dest = af.rename_file(basedir, False, False, False, False)
+    print("New file:", dest)
+    os.remove(tmpfil)
+
+def process_wav_file(path, basedir, track):
+    fo, tmpwav = tempfile.mkstemp(suffix=".wav")
+    os.close(fo)
+    fo, tmpaiff = tempfile.mkstemp(suffix=".aiff")
+    os.close(fo)
+
+    print("Copying to temporary location...")
+    shutil.copy(path, tmpwav)
+    print("Normalizing...")
+    retval = subprocess.call(["normalize-audio", "-q", "-T", "1.5", "--peak",
+	    tmpwav])
+    if retval:
+        raise ConversionException("Normalization failed")
+
+    print("Converting to AIFF...")
+    retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic", 
+	    "-y",  "-i", tmpwav, tmpaiff])
+    if retval:
+        raise ConversionException("Encoding failed")
+    process_file(tmpaiff, basedir, track)
+    os.remove(tmpwav)
+    os.remove(tmpaiff)
+
+def process_flac_file(path, basedir, track):
+    fo, tmpwav = tempfile.mkstemp(suffix=".wav")
+    os.close(fo)
+    print("Converting to intermediate .wav...")
+    retval = subprocess.call(["flac", "--silent", "-f", "-d", "-o", tmpwav, path])
+    if retval:
+        raise ConversionException("FLAC decoding failed")
+    process_wav_file(tmpwav, basedir, track)
+    os.remove(tmpwav)
+
+
+def get_possible_positions(position):
+    ret = [position]
+
+    # A1 might just be A
+    if position[-1] == "1":
+        ret.append(position[:-1])
+    elif not position[-1].isdigit():
+        # ... or A might actually be A1
+        ret.append(position + "1")
+
+    ret2 = []
+    for item in ret:
+        ret2.append(item)
+        if item[0] == "B":
+            ret2.append("AA" + item[1:])
+    ret = ret2
+
+    ret2 = []
+    # Some people do this, annoying
+    for item in ret:
+        ret2.append(item)
+        ret2.append(item + ".")
+
+        # 1B instead of B1, seen this at least once
+        m = pregex.match(item)
+        if m:
+            l, n = m.groups()
+            ret2.append("%s%s" % (n, l))
+
+    ret = ret2
+
+    return ret2
+
+def get_release_and_track(releaseid, position):
+    rel = client_interface.DiscogsRelease(releaseid)
+
+    rdata = rel.data
+    if not rdata:
+        print(("Release %d not found" % releaseid))
+        return None
+
+    positions = get_possible_positions(position.upper())
+
+    for i in range(len(rdata["tracklist"])):
+        track = rdata["tracklist"][i]
+        tp = track["position"].upper()
+        for p in positions:
+            if p == tp:
+                return rel.getTrack(i)
+
+    print("Couldn't find position %s in release %s" %
+		    (position, rdata["title"]))
+    return None
+
+parser = argparse.ArgumentParser(
+        description="Convert WAV/FLAC files to AIFF and tag them")
+parser.add_argument("-d", "--delete", action="store_true",
+        help="Delete original file when finished")
+parser.add_argument("files", metavar="FILE", type=str, nargs="+",
+        help="Files to convert")
+parser.add_argument("-b", "--basedir")
+
+args = parser.parse_args(sys.argv[1:])
+
+
+tracks = []
+files = []
+
+for i in args.files:
+    files.extend(glob.glob(i))
+
+for path in files:
+    filename = os.path.basename(path)
+
+    m = fregex.match(filename)
+    if not m:
+        print('Skipping', filename)
+        continue
+    releaseid = m.group(1)
+    extension = m.group(5)
+    position = m.group(3).upper() if m.group(3) else m.group(4)
+    extension = extension.lower()
+    releaseid = int(releaseid)
+
+    track = get_release_and_track(releaseid, position)
+    if not track:
+        print("Couldn't look up", filename)
+        continue
+
+    tracks.append((track, path, extension))
+
+for track, path, extension in tracks:
+    if not args.basedir:
+        basedir = os.path.dirname(os.path.abspath(path))
+    else:
+        basedir = args.basedir
+
+    print()
+    print("Processing", path)
+    print("Identified as", track)
+    try:
+        if extension == "wav":
+            process_wav_file(path, basedir, track)
+        elif extension == "flac":
+            process_flac_file(path, basedir, track)
+        elif extension == "mp3":
+            process_file(path, basedir, track)
+        else:
+            print("Don't know how to handle", path)
+            continue
+
+    except ConversionException as ce:
+        print(ce)
+        continue
+
+    if args.delete:
+        os.remove(path)
+

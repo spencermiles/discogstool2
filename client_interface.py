@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import discogs_client
 import util
 import os

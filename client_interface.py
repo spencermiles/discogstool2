@@ -178,7 +178,7 @@ class DiscogsRelease:
             imgdata = fo.read()
             fo.close()
         else:
-            time.sleep(1.5)
+            time.sleep(1.05)
             imgdata = urllib.request.urlopen(uri).read()
             fo = open(util.userfile(hashuri), "wb")
             fo.write(imgdata)

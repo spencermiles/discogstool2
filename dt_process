@@ -11,7 +11,9 @@ import libtags
 import tempfile
 import shutil
 import subprocess
+import wavfile
 
+release_regex = re.compile(r"[[]r([0-9]+)[]][.][a-zA-Z]+$")
 fregex = re.compile(r"([0-9]+)(([a-zA-Z)+[0-9]*)|[.]([a-zA-Z0-9. ]+))[.]([a-zA-Z]+)$")
 pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
 
@@ -29,23 +31,28 @@ def process_file(path, basedir, track):
     print("New file:", dest)
     os.remove(tmpfil)
 
-def process_wav_file(path, basedir, track):
-    fo, tmpwav = tempfile.mkstemp(suffix=".wav")
-    os.close(fo)
+def process_wav_file(path, basedir, track, copy):
     fo, tmpaiff = tempfile.mkstemp(suffix=".aiff")
     os.close(fo)
 
-    print("Copying to temporary location...")
-    shutil.copy(path, tmpwav)
+    if copy:
+        fo, tmpwav = tempfile.mkstemp(suffix=".wav")
+        os.close(fo)
+        print("Copying to temporary location...")
+        shutil.copy(path, tmpwav)
+    else:
+        tmpwav = path
+
     print("Normalizing...")
     retval = subprocess.call(["normalize-audio", "-q", "-T", "1.5", "--peak",
 	    tmpwav])
     if retval:
         raise ConversionException("Normalization failed")
 
-    print("Converting to AIFF...")
-    retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic", 
-	    "-y",  "-i", tmpwav, tmpaiff])
+    print("Converting to 44.1/16 AIFF...")
+    retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
+            "-y",  "-i", tmpwav, "-sample_fmt", "s16", "-ar", "44100",
+            tmpaiff])
     if retval:
         raise ConversionException("Encoding failed")
     process_file(tmpaiff, basedir, track)
@@ -59,9 +66,45 @@ def process_flac_file(path, basedir, track):
     retval = subprocess.call(["flac", "--silent", "-f", "-d", "-o", tmpwav, path])
     if retval:
         raise ConversionException("FLAC decoding failed")
-    process_wav_file(tmpwav, basedir, track)
+    process_wav_file(tmpwav, basedir, track, False)
     os.remove(tmpwav)
 
+def split_wav_file(path, outdir, releaseid):
+    print("Split %s into per-track .wav files..." % path)
+    rel = client_interface.DiscogsRelease(releaseid)
+    print("This release is %s" % rel)
+
+    rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
+    print("%d samples" % len(rdata))
+    markers.extend([0, len(rdata)])
+    markers.sort()
+    print("Markers:", markers)
+    regions = []
+    for i in range(len(markers) - 1):
+        start = markers[i]     # inclusive
+        end = markers[i + 1]   # not inclusive
+        duration = (end - start) / rate;
+        if (duration < 10):
+            continue
+
+        print("Region (%d, %d), %d seconds" % (start, end, duration))
+        regions.append((start, end))
+
+    if len(regions) != rel.getTotalTracks():
+        raise ConversionException("Unexpected region count %d" % len(regions))
+
+    created = []
+    for i in range(rel.getTotalTracks()):
+        start, end = regions[i]
+        tdata = rdata[start:end]
+        track = rel.getTrack(i)
+        pos = track["position"]
+
+        filename = os.path.join(outdir, "%d.%s.wav" % (rel.getId(), pos))
+        print("Writing %s..." % filename)
+        wavfile.write(filename, rate, tdata, bitrate=bits)
+        created.append((track, filename, "wav"))
+    return created
 
 def get_possible_positions(position):
     ret = [position]
@@ -129,13 +172,23 @@ args = parser.parse_args(sys.argv[1:])
 
 
 tracks = []
-files = []
+files = args.files
+tmpdir = tempfile.mkdtemp()
 
-for i in args.files:
-    files.extend(glob.glob(i))
+#for i in args.files:
+#    files.extend(glob.glob(i))
 
+print(files)
 for path in files:
     filename = os.path.basename(path)
+
+    m = release_regex.match(filename)
+    if m:
+        print(m.groups())
+        releaseid = int(m.group(1))
+        created = split_wav_file(path, tmpdir, releaseid)
+        tracks.extend(created)
+        continue
 
     m = fregex.match(filename)
     if not m:
@@ -165,7 +218,7 @@ for track, path, extension in tracks:
     print("Identified as", track)
     try:
         if extension == "wav":
-            process_wav_file(path, basedir, track)
+            process_wav_file(path, basedir, track, True)
         elif extension == "flac":
             process_flac_file(path, basedir, track)
         elif extension == "mp3":

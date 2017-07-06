@@ -21,7 +21,7 @@ tag_map = {
         "bpm" : "TBPM",
         "title" : "TIT2",
         "year" : "TDRC",
-        "comment" : "COMM::'eng'",
+        "comment" : "COMM::eng",
         "genre" : "TCON",
         "image" : "APIC",
         "track" : "TRCK",

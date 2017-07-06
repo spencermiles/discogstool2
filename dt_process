@@ -103,7 +103,7 @@ def split_wav_file(path, outdir, releaseid):
         filename = os.path.join(outdir, "%d.%s.wav" % (rel.getId(), pos))
         print("Writing %s..." % filename)
         wavfile.write(filename, rate, tdata, bitrate=bits)
-        created.append((track, filename, "wav"))
+        created.append((track, filename, "wav", False))
     return created
 
 def get_possible_positions(position):
@@ -205,9 +205,9 @@ for path in files:
         print("Couldn't look up", filename)
         continue
 
-    tracks.append((track, path, extension))
+    tracks.append((track, path, extension, True))
 
-for track, path, extension in tracks:
+for track, path, extension, copy in tracks:
     if not args.basedir:
         basedir = os.path.dirname(os.path.abspath(path))
     else:
@@ -218,7 +218,7 @@ for track, path, extension in tracks:
     print("Identified as", track)
     try:
         if extension == "wav":
-            process_wav_file(path, basedir, track, True)
+            process_wav_file(path, basedir, track, copy)
         elif extension == "flac":
             process_flac_file(path, basedir, track)
         elif extension == "mp3":

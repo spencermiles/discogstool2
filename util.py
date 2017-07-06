@@ -20,7 +20,7 @@ def get_audio_files(basedir):
         for fname in files:
             if fname.startswith("."):
                 continue
-            if file_extension(fname) in ["mp3", "m4a", "aac", "mp4", "aiff"]:
+            if file_extension(fname) in ["mp3", "m4a", "aac", "mp4", "aiff", "aif"]:
                 filename = os.path.abspath(os.path.join(root, fname))
                 try:
                     filelist.append(filename)

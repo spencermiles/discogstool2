@@ -134,20 +134,28 @@ class DiscogsRelease:
     def getYear(self):
         return str(self.data["year"])
 
-    def compileListData(self, listname, key):
-        s = self.data[listname][0][key]
+    def compileListData(self, listname, keys):
+        for key in keys:
+            s = self.data[listname][0][key]
+            if s:
+                break
+
         for i in self.data[listname][1:]:
-            s = "%s / %s" % (s, i[key])
+            for key in keys:
+                x = i[key]
+                if x:
+                    break
+            s = "%s / %s" % (s, x)
         return s.strip()
 
     def getArtist(self):
-        return self.compileListData("artists", "name")
+        return self.compileListData("artists", ["anv", "name"])
 
     def getLabel(self):
-        return self.compileListData("labels", "name")
+        return self.compileListData("labels", ["name"])
 
     def getCatno(self):
-        return self.compileListData("labels", "catno")
+        return self.compileListData("labels", ["catno"])
 
     def getTitle(self):
         rt = self.data["title"]

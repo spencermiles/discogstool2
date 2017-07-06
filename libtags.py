@@ -133,6 +133,9 @@ class AudioFile(object):
                 release.getCatno(), release.getId())
         self["label"] = release.getLabel()
         self["track"] = (track.getTrackNumber(), release.getTotalTracks())
+        # Don't overwrite Genre set already
+        if not self["genre"]:
+            self["genre"] = release.getGenre()
         if "image" not in list(self.keys()):
             i = release.getArtwork()
             if i:

@@ -159,6 +159,9 @@ class DiscogsRelease:
     def getCatno(self):
         return self.compileListData("labels", ["catno"])
 
+    def getGenre(self):
+        return ", ".join(self.data["styles"])
+
     def getTitle(self):
         rt = self.data["title"]
         if not rt.startswith("Untitled"):

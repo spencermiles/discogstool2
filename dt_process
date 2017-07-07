@@ -84,7 +84,7 @@ def split_wav_file(path, outdir, releaseid):
         start = markers[i]     # inclusive
         end = markers[i + 1]   # not inclusive
         duration = (end - start) / rate;
-        if (duration < 10):
+        if (duration < 30):
             continue
 
         print("Region (%d, %d), %d seconds" % (start, end, duration))

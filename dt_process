@@ -69,6 +69,19 @@ def process_flac_file(path, basedir, track):
     process_wav_file(tmpwav, basedir, track, False)
     os.remove(tmpwav)
 
+def get_wav_regions(markers, rate, min_len):
+    regions = []
+    for i in range(len(markers) - 1):
+        start = markers[i]     # inclusive
+        end = markers[i + 1]   # not inclusive
+        duration = (end - start) / rate;
+        if (duration < min_len):
+            continue
+
+        print("Region (%d, %d), %d seconds" % (start, end, duration))
+        regions.append((start, end))
+    return regions
+
 def split_wav_file(path, outdir, releaseid):
     print("Split %s into per-track .wav files..." % path)
     rel = client_interface.DiscogsRelease(releaseid)
@@ -78,20 +91,16 @@ def split_wav_file(path, outdir, releaseid):
     print("%d samples" % len(rdata))
     markers.extend([0, len(rdata)])
     markers.sort()
-    print("Markers:", markers)
-    regions = []
-    for i in range(len(markers) - 1):
-        start = markers[i]     # inclusive
-        end = markers[i + 1]   # not inclusive
-        duration = (end - start) / rate;
-        if (duration < 30):
-            continue
 
-        print("Region (%d, %d), %d seconds" % (start, end, duration))
-        regions.append((start, end))
+    print("Markers:", markers)
+    regions = get_wav_regions(markers, rate, 30)
 
     if len(regions) != rel.getTotalTracks():
-        raise ConversionException("Unexpected region count %d" % len(regions))
+        # Try again with only 10 second gaps
+        # Thanks, Giegling 20
+        regions = get_wav_regions(markers, rate, 10)
+        if len(regions) != rel.getTotalTracks():
+            raise ConversionException("Unexpected region count %d" % len(regions))
 
     created = []
     for i in range(rel.getTotalTracks()):

@@ -6,6 +6,7 @@ import os.path
 import shutil
 import filecmp
 import re
+import imghdr
 from mutagen.id3 import ID3
 import client_interface
 
@@ -152,10 +153,12 @@ class AudioFile(object):
         if self.tagstype == "ID3":
 
             clazz = getattr(mutagen.id3, mkey[:4])
-            if mkey == "COMM::'eng'":
+            if mkey == "COMM::eng":
                 value = clazz(encoding=3, desc="", lang='eng', text=value)
             elif mkey == "APIC":
-                value = clazz(type=0, encoding=0, mime="image/jpeg", data=value)
+                self.obj.tags.delall("APIC")
+                mimetype = "image/" + imghdr.what(None, h=value)
+                value = clazz(type=0, encoding=0, mime=mimetype, data=value)
             else:
                 if mkey == "TRCK":
                     if value[1]:

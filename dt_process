@@ -187,7 +187,6 @@ tmpdir = tempfile.mkdtemp()
 #for i in args.files:
 #    files.extend(glob.glob(i))
 
-print(files)
 for path in files:
     filename = os.path.basename(path)
 
@@ -212,7 +211,7 @@ for path in files:
     track = get_release_and_track(releaseid, position)
     if not track:
         print("Couldn't look up", filename)
-        continue
+        sys.exit(1)
 
     tracks.append((track, path, extension, True))
 

@@ -111,7 +111,8 @@ class DiscogsRelease:
         self.data = scrub_data(self.getData(rid))
 
         # Filter out non-track items in the tracklist like headings
-        self.data["tracklist"] = [i for i in self.data["tracklist"] if i["type_"] == "track"]
+        self.data["tracklist"] = [i for i in self.data["tracklist"]
+                if i["type_"] == "track" and i["title"] != ""]
         self.totaltracks = len(self.data["tracklist"])
         self.imgdata = None
 

@@ -120,6 +120,8 @@ parser.add_argument("-M", "--missing", action="store_true",
         help="Report tracks locally not found in Discogs collection")
 parser.add_argument("-D", "--discogs-missing",  action="store_true",
         help="Report releases in Discogs collection not found locally")
+parser.add_argument("-Y", "--min-year", type=str,
+	help="Ignore releases older than the specified year")
 parser.add_argument("-P", "--partially-recorded", action="store_true",
         help="Report releases partially recorded")
 parser.add_argument("-v", "--verbose", action="store_true",
@@ -130,7 +132,7 @@ verbose = args.verbose
 
 filelist = []
 for basedir in args.basedirs:
-    print(("Scanning", basedir))
+    print("Scanning", basedir)
     filelist.extend(util.get_audio_files(basedir))
 
 aflist = []
@@ -138,20 +140,22 @@ for f in filelist:
     if verbose:
         print(f)
     try:
-        aflist.append(libtags.AudioFile(f))
+        af = libtags.AudioFile(f)
+        print(af.track)
+        aflist.append(af)
     except client_interface.ClientException as ce:
-        print(("Skipping %s: %s" % (f, ce)))
+        print("Skipping %s: %s" % (f, ce))
     except libtags.TagsException as te:
-        print(("Skipping %s: %s" % (f, te)))
+        print("Skipping %s: %s" % (f, te))
 
 
 if args.update_metadata:
     for af in aflist:
-        print(("Updating", af.getTrack()))
+        print("Updating", af.getTrack())
         if not args.dry_run:
             af.commit()
         else:
-            print(("Would have updated", af))
+            print("Would have updated", af)
 
 if args.collection:
     collection_report(args.collection, aflist, args)

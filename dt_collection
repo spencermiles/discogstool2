@@ -141,7 +141,6 @@ for f in filelist:
         print(f)
     try:
         af = libtags.AudioFile(f)
-        print(af.track)
         aflist.append(af)
     except client_interface.ClientException as ce:
         print("Skipping %s: %s" % (f, ce))

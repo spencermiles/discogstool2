@@ -225,7 +225,7 @@ class AudioFile(object):
                     shutil.move(self.filename, newpath)
                     self.filename = newpath
                 else:
-                    shutil.copy2(self.filename, newpath)
+                    shutil.copyfile(self.filename, newpath)
         else:
             if verbose:
                 print("Skipping unchanged file", newpath)

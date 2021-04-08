@@ -11,7 +11,7 @@ conn = sqlite3.connect(db_file)
 conn.row_factory = sqlite3.Row
 
 # default 30 days maximum data age
-max_age = 30
+max_age = 7
 
 if create_flag:
     print("Creating new database.")

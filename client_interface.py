@@ -9,12 +9,19 @@ import database
 import time
 import urllib.request, urllib.error, urllib.parse
 import sys
+import multiprocessing
 
 discogs_auth = util.userfile("discogs_auth")
 useragent = "discogstool/2.0"
 consumer_key = "mWCofNBrngwtGCSBOTDe"
 consumer_secret = "nBgWYPSMtAonLobnAuZiowpJyUzhbcgW"
 cached_instance = None
+
+url_headers = {
+    'User-Agent' : useragent
+}
+
+discogs_lock = multiprocessing.Lock()
 
 class ClientException(Exception):
     pass
@@ -54,7 +61,7 @@ def get_client_instance():
         set_user_auth_tokens(token, secret)
     else:
         c = discogs_client.Client(useragent, consumer_key, consumer_secret,
-                                  token, secret)
+                                token, secret)
     cached_instance = c
     return c
 
@@ -83,23 +90,24 @@ class DiscogsRelease:
             else:
                 database.delete(key)
 
-        client = get_client_instance()
+        with discogs_lock:
+            client = get_client_instance()
 
-        # Even though rate limiting properly, still see transient
-        # "Connection Reset By Peer" and "Bad Status Line" errors
-        success = False
-        for i in range(3):
-            try:
-                time.sleep(1.1 + (5 * i))
-                release = client.release(rid)
-                release.refresh()
-            except Exception as e:
-                continue
-            success = True
-            break
+            # Even though rate limiting properly, still see transient
+            # "Connection Reset By Peer" and "Bad Status Line" errors
+            success = False
+            for i in range(3):
+                try:
+                    time.sleep(1.1 + (5 * i))
+                    release = client.release(rid)
+                    release.refresh()
+                except Exception as e:
+                    continue
+                success = True
+                break
 
-        if not success:
-            raise ClientException("release %d couldn't be fetched" % rid)
+            if not success:
+                raise ClientException("release %d couldn't be fetched" % rid)
 
         data = scrub_data(release.data)
         database.put(key, data)
@@ -179,16 +187,25 @@ class DiscogsRelease:
 
         uri = self.data["images"][0]["uri"]
         hashuri = uri.rsplit("/",1)[-1]
-        if os.path.exists(util.userfile(hashuri)):
-            fo = open(util.userfile(hashuri), "rb")
-            imgdata = fo.read()
-            fo.close()
-        else:
-            time.sleep(1.05)
-            imgdata = urllib.request.urlopen(uri).read()
-            fo = open(util.userfile(hashuri), "wb")
-            fo.write(imgdata)
-            fo.close()
+
+        with discogs_lock:
+            if os.path.exists(util.userfile(hashuri)):
+                with open(util.userfile(hashuri), "rb") as fo:
+                    imgdata = fo.read()
+            else:
+                time.sleep(1.05)
+                try:
+                    req = urllib.request.Request(uri, data=None, headers=url_headers)
+                    imgdata = urllib.request.urlopen(req).read()
+                except urllib.error.HTTPError as err:
+                    print("Error fetching cover art")
+                    print("URL: ", uri)
+                    print(err.code, err.reason)
+                    print(err.headers)
+                    raise
+
+                with open(util.userfile(hashuri), "wb") as fo:
+                    fo.write(imgdata)
 
         self.imgdata = imgdata
         return imgdata

@@ -12,6 +12,8 @@ import tempfile
 import shutil
 import subprocess
 import wavfile
+import multiprocessing
+from multiprocessing import Pool, TimeoutError
 
 release_regex = re.compile(r"[[]r([0-9]+)[]][.][a-zA-Z]+$")
 fregex = re.compile(r"([0-9]+)(([a-zA-Z)+[0-9]*)|[.]([a-zA-Z0-9. ]+))[.]([a-zA-Z]+)$")
@@ -20,6 +22,11 @@ pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
 class ConversionException(Exception):
     pass
 
+def debug(*strs):
+    if not args.verbose:
+        return
+    print(multiprocessing.current_process(), strs)
+
 def process_file(path, basedir, track):
     ext = "." + path.rsplit(".", 1)[1]
     fo, tmpfil = tempfile.mkstemp(suffix=ext)
@@ -27,8 +34,8 @@ def process_file(path, basedir, track):
     shutil.copy(path, tmpfil)
     af = libtags.AudioFile(tmpfil, track)
     af.commit()
-    dest = af.rename_file(basedir, False, False, False, False)
-    print("New file:", dest)
+    dest = af.rename_file(basedir, args.verbose, False, False, False)
+    debug("New file:", dest)
     os.remove(tmpfil)
 
 def process_wav_file(path, basedir, track, copy):
@@ -38,18 +45,18 @@ def process_wav_file(path, basedir, track, copy):
     if copy:
         fo, tmpwav = tempfile.mkstemp(suffix=".wav")
         os.close(fo)
-        print("Copying to temporary location...")
-        shutil.copy(path, tmpwav)
+        debug("Copying to temporary location...")
+        shutil.copyfile(path, tmpwav)
     else:
         tmpwav = path
 
-    print("Normalizing...")
+    debug("Normalizing...")
     retval = subprocess.call(["normalize-audio", "-q", "-T", "1.5", "--peak",
 	    tmpwav])
     if retval:
         raise ConversionException("Normalization failed")
 
-    print("Converting to 44.1/16 AIFF...")
+    debug("Converting to 44.1/16 AIFF...")
     retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
             "-y",  "-i", tmpwav, "-sample_fmt", "s16", "-ar", "44100",
             tmpaiff])
@@ -62,7 +69,7 @@ def process_wav_file(path, basedir, track, copy):
 def process_flac_file(path, basedir, track):
     fo, tmpwav = tempfile.mkstemp(suffix=".wav")
     os.close(fo)
-    print("Converting to intermediate .wav...")
+    debug("Converting to intermediate .wav...")
     retval = subprocess.call(["flac", "--silent", "-f", "-d", "-o", tmpwav, path])
     if retval:
         raise ConversionException("FLAC decoding failed")
@@ -78,21 +85,20 @@ def get_wav_regions(markers, rate, min_len):
         if (duration < min_len):
             continue
 
-        print("Region (%d, %d), %d seconds" % (start, end, duration))
+        debug("Region (%d, %d), %d seconds" % (start, end, duration))
         regions.append((start, end))
     return regions
 
 def split_wav_file(path, outdir, releaseid):
-    print("Split %s into per-track .wav files..." % path)
     rel = client_interface.DiscogsRelease(releaseid)
-    print("This release is %s" % rel)
+    print("split %s (%s)" % (path, rel))
 
     rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
-    print("%d samples" % len(rdata))
+    debug("%d samples" % len(rdata))
     markers.extend([0, len(rdata)])
     markers.sort()
 
-    print("Markers:", markers)
+    debug("Markers:", markers)
     regions = get_wav_regions(markers, rate, 30)
 
     if len(regions) != rel.getTotalTracks():
@@ -110,7 +116,7 @@ def split_wav_file(path, outdir, releaseid):
         pos = track["position"]
 
         filename = os.path.join(outdir, "%d.%s.wav" % (rel.getId(), pos))
-        print("Writing %s..." % filename)
+        debug("Writing %s..." % filename)
         wavfile.write(filename, rate, tdata, bitrate=bits)
         created.append((track, filename, "wav", False))
     return created
@@ -169,61 +175,11 @@ def get_release_and_track(releaseid, position):
 		    (position, rdata["title"]))
     return None
 
-parser = argparse.ArgumentParser(
-        description="Convert WAV/FLAC files to AIFF and tag them")
-parser.add_argument("-d", "--delete", action="store_true",
-        help="Delete original file when finished")
-parser.add_argument("files", metavar="FILE", type=str, nargs="+",
-        help="Files to convert")
-parser.add_argument("-b", "--basedir")
+def process_track(trackinfo):
+    track, path, extension, copy = trackinfo
+    basedir = args.basedir
 
-args = parser.parse_args(sys.argv[1:])
-
-
-tracks = []
-files = args.files
-tmpdir = tempfile.mkdtemp()
-
-#for i in args.files:
-#    files.extend(glob.glob(i))
-
-for path in files:
-    filename = os.path.basename(path)
-
-    m = release_regex.match(filename)
-    if m:
-        print(m.groups())
-        releaseid = int(m.group(1))
-        created = split_wav_file(path, tmpdir, releaseid)
-        tracks.extend(created)
-        continue
-
-    m = fregex.match(filename)
-    if not m:
-        print('Skipping', filename)
-        continue
-    releaseid = m.group(1)
-    extension = m.group(5)
-    position = m.group(3).upper() if m.group(3) else m.group(4)
-    extension = extension.lower()
-    releaseid = int(releaseid)
-
-    track = get_release_and_track(releaseid, position)
-    if not track:
-        print("Couldn't look up", filename)
-        sys.exit(1)
-
-    tracks.append((track, path, extension, True))
-
-for track, path, extension, copy in tracks:
-    if not args.basedir:
-        basedir = os.path.dirname(os.path.abspath(path))
-    else:
-        basedir = args.basedir
-
-    print()
-    print("Processing", path)
-    print("Identified as", track)
+    print(path, "-->", track)
     try:
         if extension == "wav":
             process_wav_file(path, basedir, track, copy)
@@ -233,12 +189,81 @@ for track, path, extension, copy in tracks:
             process_file(path, basedir, track)
         else:
             print("Don't know how to handle", path)
-            continue
+            return
 
+        if args.delete and not copy:
+            os.remove(path)
     except ConversionException as ce:
         print(ce)
-        continue
 
-    if args.delete:
-        os.remove(path)
+def poolsplit(item):
+    path, tmpdir, releaseid = item
+
+    return split_wav_file(path, tmpdir, releaseid)
+
+parser = argparse.ArgumentParser(
+        description="Convert WAV/FLAC files to AIFF and tag them")
+parser.add_argument("-d", "--delete", action="store_true",
+        help="Delete original file when finished")
+parser.add_argument("files", metavar="FILE", type=str, nargs="+",
+        help="Files to convert")
+parser.add_argument("-b", "--basedir", required=True)
+parser.add_argument("-v", "--verbose", action="store_true")
+parser.add_argument("-j", "--jobs", default=multiprocessing.cpu_count())
+
+args = parser.parse_args(sys.argv[1:])
+
+
+tracks = []
+files = args.files
+tmpdir = tempfile.mkdtemp()
+
+solo_tracks = []
+split_wavs = []
+
+try:
+    for path in files:
+        filename = os.path.basename(path)
+        m = release_regex.match(filename)
+        if not m:
+            continue
+        releaseid = int(m.group(1))
+        split_wavs.append((path, tmpdir, releaseid))
+
+    if split_wavs:
+        pool = Pool(processes=args.jobs)
+        result = pool.map(poolsplit, split_wavs)
+        pool.close()
+        pool.join()
+        for res in result:
+            tracks.extend(res)
+
+    for path in files:
+        filename = os.path.basename(path)
+        m = fregex.match(filename)
+        if not m:
+            debug('Skipping', filename)
+            continue
+        releaseid = m.group(1)
+        extension = m.group(5)
+        position = m.group(3).upper() if m.group(3) else m.group(4)
+        extension = extension.lower()
+        releaseid = int(releaseid)
+
+        track = get_release_and_track(releaseid, position)
+        if not track:
+            print("Couldn't look up", filename)
+            sys.exit(1)
+
+        tracks.append((track, path, extension, True))
+
+    pool = Pool(processes=args.jobs)
+    f = pool.map(process_track, tracks)
+    pool.close()
+    pool.join()
+
+except:
+    raise
+finally:
+    shutil.rmtree(tmpdir)
 

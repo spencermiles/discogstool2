@@ -25,56 +25,65 @@ class ConversionException(Exception):
 def debug(*strs):
     if not args.verbose:
         return
-    print(multiprocessing.current_process(), strs)
+    print(multiprocessing.current_process().name, strs)
 
-def process_file(path, basedir, track):
-    ext = "." + path.rsplit(".", 1)[1]
-    fo, tmpfil = tempfile.mkstemp(suffix=ext)
+def file_extension(path):
+    return "." + path.rsplit(".", 1)[1]
+
+def new_tmp(ext):
+    fo, tmppath = tempfile.mkstemp(suffix=ext, dir=tmpdir)
     os.close(fo)
+    debug("New temp %s file: %s" % (ext, tmppath))
+    return tmppath
+
+def copy_to_tmp(path):
+    ext = file_extension(path)
+    tmpfil = new_tmp(ext)
+    debug("Copying %s to temporary location %s..." % (path, tmpfil))
     shutil.copy(path, tmpfil)
-    af = libtags.AudioFile(tmpfil, track)
-    af.commit()
-    dest = af.rename_file(basedir, args.verbose, False, False, False)
-    debug("New file:", dest)
-    os.remove(tmpfil)
+    return tmpfil
 
+# Moves file to new filename with metadata applied
+def process_file(path, basedir, track):
+    af = libtags.AudioFile(path, track)
+    af.commit()
+    dest = af.rename_file(basedir, args.verbose, False, True, False)
+    debug("Renamed %s -> %s:" % (path, dest))
+
+# if copy, don't do anything the modifies in place
+# if not copy, delete path when we are done
 def process_wav_file(path, basedir, track, copy):
-    fo, tmpaiff = tempfile.mkstemp(suffix=".aiff")
-    os.close(fo)
+    tmpaiff = new_tmp(".aiff")
 
     if copy:
-        fo, tmpwav = tempfile.mkstemp(suffix=".wav")
-        os.close(fo)
-        debug("Copying to temporary location...")
-        shutil.copyfile(path, tmpwav)
-    else:
-        tmpwav = path
+        path = copy_to_tmp(path)
 
     debug("Normalizing...")
     retval = subprocess.call(["normalize-audio", "-q", "-T", "1.5", "--peak",
-	    tmpwav])
+	    path])
     if retval:
         raise ConversionException("Normalization failed")
 
     debug("Converting to 44.1/16 AIFF...")
     retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
-            "-y",  "-i", tmpwav, "-sample_fmt", "s16", "-ar", "44100",
+            "-y",  "-i", path, "-sample_fmt", "s16", "-ar", "44100",
             tmpaiff])
     if retval:
         raise ConversionException("Encoding failed")
     process_file(tmpaiff, basedir, track)
-    os.remove(tmpwav)
-    os.remove(tmpaiff)
 
 def process_flac_file(path, basedir, track):
-    fo, tmpwav = tempfile.mkstemp(suffix=".wav")
-    os.close(fo)
+    tmpwav = new_tmp(".wav")
     debug("Converting to intermediate .wav...")
     retval = subprocess.call(["flac", "--silent", "-f", "-d", "-o", tmpwav, path])
     if retval:
         raise ConversionException("FLAC decoding failed")
     process_wav_file(tmpwav, basedir, track, False)
-    os.remove(tmpwav)
+
+def process_mp3_file(path, basedir, track, copy):
+    # Make a copy and process the copied file
+    tmpfil = copy_to_tmp(path)
+    process_file(tmpfil, basedir, track)
 
 def get_wav_regions(markers, rate, min_len):
     regions = []
@@ -186,13 +195,11 @@ def process_track(trackinfo):
         elif extension == "flac":
             process_flac_file(path, basedir, track)
         elif extension == "mp3":
-            process_file(path, basedir, track)
+            process_mp3_file(path, basedir, track, copy)
         else:
             print("Don't know how to handle", path)
             return
 
-        if args.delete and not copy:
-            os.remove(path)
     except ConversionException as ce:
         print(ce)
 
@@ -203,8 +210,6 @@ def poolsplit(item):
 
 parser = argparse.ArgumentParser(
         description="Convert WAV/FLAC files to AIFF and tag them")
-parser.add_argument("-d", "--delete", action="store_true",
-        help="Delete original file when finished")
 parser.add_argument("files", metavar="FILE", type=str, nargs="+",
         help="Files to convert")
 parser.add_argument("-b", "--basedir", required=True)
@@ -213,13 +218,13 @@ parser.add_argument("-j", "--jobs", default=multiprocessing.cpu_count())
 
 args = parser.parse_args(sys.argv[1:])
 
-
 tracks = []
 files = args.files
-tmpdir = tempfile.mkdtemp()
-
 solo_tracks = []
 split_wavs = []
+
+os.makedirs(args.basedir, exist_ok=True)
+tmpdir = tempfile.mkdtemp(dir=args.basedir)
 
 try:
     for path in files:
@@ -231,6 +236,7 @@ try:
         split_wavs.append((path, tmpdir, releaseid))
 
     if split_wavs:
+        print("Split %d .wav files..." % len(split_wavs))
         pool = Pool(processes=args.jobs)
         result = pool.map(poolsplit, split_wavs)
         pool.close()
@@ -254,9 +260,9 @@ try:
         if not track:
             print("Couldn't look up", filename)
             sys.exit(1)
-
         tracks.append((track, path, extension, True))
 
+    print("Tag/convert %d audio files..." % len(tracks))
     pool = Pool(processes=args.jobs)
     f = pool.map(process_track, tracks)
     pool.close()
@@ -265,5 +271,5 @@ try:
 except:
     raise
 finally:
-    shutil.rmtree(tmpdir)
+    shutil.rmtree(tmpdir, ignore_errors=True)
 

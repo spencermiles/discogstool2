@@ -1,0 +1,5 @@
+mutagen
+fish
+python3-discogs-client
+numpy
+urllib3

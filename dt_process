@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import wavfile
 import multiprocessing
+import tqdm
 from multiprocessing import Pool, TimeoutError
 
 release_regex = re.compile(r"[[]r([0-9]+)[]][.][a-zA-Z]+$")
@@ -100,7 +101,7 @@ def get_wav_regions(markers, rate, min_len):
 
 def split_wav_file(path, outdir, releaseid):
     rel = client_interface.DiscogsRelease(releaseid)
-    print("split %s (%s)" % (path, rel))
+    debug("split %s (%s)" % (path, rel))
 
     rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
     debug("%d samples" % len(rdata))
@@ -115,7 +116,8 @@ def split_wav_file(path, outdir, releaseid):
         # Thanks, Giegling 20
         regions = get_wav_regions(markers, rate, 10)
         if len(regions) != rel.getTotalTracks():
-            raise ConversionException("Unexpected region count %d" % len(regions))
+            raise ConversionException("Unexpected region count %d in %s (%s)" % 
+                    (len(regions), rel, path))
 
     created = []
     for i in range(rel.getTotalTracks()):
@@ -188,7 +190,7 @@ def process_track(trackinfo):
     track, path, extension, copy = trackinfo
     basedir = args.basedir
 
-    print(path, "-->", track)
+    debug(path, "-->", track)
     try:
         if extension == "wav":
             process_wav_file(path, basedir, track, copy)
@@ -236,11 +238,12 @@ try:
         split_wavs.append((path, tmpdir, releaseid))
 
     if split_wavs:
-        print("Split %d .wav files..." % len(split_wavs))
-        pool = Pool(processes=args.jobs)
-        result = pool.map(poolsplit, split_wavs)
-        pool.close()
-        pool.join()
+        print("Split multi-track .wav files...")
+
+        with Pool(args.jobs) as p:
+            result = list(tqdm.tqdm(p.imap(poolsplit, split_wavs),
+                                    total=len(split_wavs)))
+
         for res in result:
             tracks.extend(res)
 
@@ -262,11 +265,11 @@ try:
             sys.exit(1)
         tracks.append((track, path, extension, True))
 
-    print("Tag/convert %d audio files..." % len(tracks))
-    pool = Pool(processes=args.jobs)
-    f = pool.map(process_track, tracks)
-    pool.close()
-    pool.join()
+    print("Tag/normalize/convert audio files...")
+
+    with Pool(args.jobs) as p:
+        result = list(tqdm.tqdm(p.imap(process_track, tracks),
+                                total=len(tracks)))
 
 except:
     raise

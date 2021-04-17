@@ -216,7 +216,8 @@ parser.add_argument("files", metavar="FILE", type=str, nargs="+",
         help="Files to convert")
 parser.add_argument("-b", "--basedir", required=True)
 parser.add_argument("-v", "--verbose", action="store_true")
-parser.add_argument("-j", "--jobs", default=multiprocessing.cpu_count())
+parser.add_argument("-j", "--jobs", type=int,
+                    default=multiprocessing.cpu_count())
 
 args = parser.parse_args(sys.argv[1:])
 

@@ -191,19 +191,16 @@ def process_track(trackinfo):
     basedir = args.basedir
 
     debug(path, "-->", track)
-    try:
-        if extension == "wav":
-            process_wav_file(path, basedir, track, copy)
-        elif extension == "flac":
-            process_flac_file(path, basedir, track)
-        elif extension == "mp3":
-            process_mp3_file(path, basedir, track, copy)
-        else:
-            print("Don't know how to handle", path)
-            return
 
-    except ConversionException as ce:
-        print(ce)
+    if extension == "wav":
+        process_wav_file(path, basedir, track, copy)
+    elif extension == "flac":
+        process_flac_file(path, basedir, track)
+    elif exten3sion == "mp3":
+        process_mp3_file(path, basedir, track, copy)
+    else:
+        print("Don't know how to handle", path)
+        return
 
 def poolsplit(item):
     path, tmpdir, releaseid = item
@@ -213,11 +210,14 @@ def poolsplit(item):
 parser = argparse.ArgumentParser(
         description="Convert WAV/FLAC files to AIFF and tag them")
 parser.add_argument("files", metavar="FILE", type=str, nargs="+",
-        help="Files to convert")
-parser.add_argument("-b", "--basedir", required=True)
-parser.add_argument("-v", "--verbose", action="store_true")
+                    help="Files to convert")
+parser.add_argument("-b", "--basedir", required=True,
+                    help="Base output directory for processed files")
+parser.add_argument("-v", "--verbose", action="store_true",
+                    help="Enable extra debug messages")
 parser.add_argument("-j", "--jobs", type=int,
-                    default=multiprocessing.cpu_count())
+                    default=multiprocessing.cpu_count(),
+                    help="Number of CPUs to use")
 
 args = parser.parse_args(sys.argv[1:])
 

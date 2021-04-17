@@ -16,7 +16,7 @@ import multiprocessing
 import tqdm
 from multiprocessing import Pool, TimeoutError
 
-release_regex = re.compile(r"[[]r([0-9]+)[]][.][a-zA-Z]+$")
+release_regex = re.compile(r"[\[]r([0-9]+)[\]][.][a-zA-Z]+$")
 fregex = re.compile(r"([0-9]+)(([a-zA-Z)+[0-9]*)|[.]([a-zA-Z0-9. ]+))[.]([a-zA-Z]+)$")
 pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
 

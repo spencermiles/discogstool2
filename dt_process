@@ -45,15 +45,15 @@ def copy_to_tmp(path):
     return tmpfil
 
 # Moves file to new filename with metadata applied
-def process_file(path, basedir, track):
+def process_file(path, outdir, track):
     af = libtags.AudioFile(path, track)
     af.commit()
-    dest = af.rename_file(basedir, args.verbose, False, True, False)
+    dest = af.rename_file(outdir, args.verbose, False, True, False)
     debug("Renamed %s -> %s:" % (path, dest))
 
 # if copy, don't do anything the modifies in place
 # if not copy, delete path when we are done
-def process_wav_file(path, basedir, track, copy):
+def process_wav_file(path, outdir, track, copy):
     tmpaiff = new_tmp(".aiff")
 
     if copy:
@@ -71,20 +71,20 @@ def process_wav_file(path, basedir, track, copy):
             tmpaiff])
     if retval:
         raise ConversionException("Encoding failed")
-    process_file(tmpaiff, basedir, track)
+    process_file(tmpaiff, outdir, track)
 
-def process_flac_file(path, basedir, track):
+def process_flac_file(path, outdir, track):
     tmpwav = new_tmp(".wav")
     debug("Converting to intermediate .wav...")
     retval = subprocess.call(["flac", "--silent", "-f", "-d", "-o", tmpwav, path])
     if retval:
         raise ConversionException("FLAC decoding failed")
-    process_wav_file(tmpwav, basedir, track, False)
+    process_wav_file(tmpwav, outdir, track, False)
 
-def process_mp3_file(path, basedir, track, copy):
+def process_mp3_file(path, outdir, track, copy):
     # Make a copy and process the copied file
     tmpfil = copy_to_tmp(path)
-    process_file(tmpfil, basedir, track)
+    process_file(tmpfil, outdir, track)
 
 def get_wav_regions(markers, rate, min_len):
     regions = []
@@ -188,16 +188,16 @@ def get_release_and_track(releaseid, position):
 
 def process_track(trackinfo):
     track, path, extension, copy = trackinfo
-    basedir = args.basedir
+    outdir = args.outdir
 
     debug(path, "-->", track)
 
     if extension == "wav":
-        process_wav_file(path, basedir, track, copy)
+        process_wav_file(path, outdir, track, copy)
     elif extension == "flac":
-        process_flac_file(path, basedir, track)
+        process_flac_file(path, outdir, track)
     elif exten3sion == "mp3":
-        process_mp3_file(path, basedir, track, copy)
+        process_mp3_file(path, outdir, track, copy)
     else:
         print("Don't know how to handle", path)
         return
@@ -211,7 +211,7 @@ parser = argparse.ArgumentParser(
         description="Convert WAV/FLAC files to AIFF and tag them")
 parser.add_argument("files", metavar="FILE", type=str, nargs="+",
                     help="Files to convert")
-parser.add_argument("-b", "--basedir", required=True,
+parser.add_argument("-o", "--outdir", required=True,
                     help="Base output directory for processed files")
 parser.add_argument("-v", "--verbose", action="store_true",
                     help="Enable extra debug messages")
@@ -226,8 +226,8 @@ files = args.files
 solo_tracks = []
 split_wavs = []
 
-os.makedirs(args.basedir, exist_ok=True)
-tmpdir = tempfile.mkdtemp(dir=args.basedir)
+os.makedirs(args.outdir, exist_ok=True)
+tmpdir = tempfile.mkdtemp(dir=args.outdir)
 
 try:
     for path in files:

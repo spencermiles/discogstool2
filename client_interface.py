@@ -193,16 +193,25 @@ class DiscogsRelease:
                 with open(util.userfile(hashuri), "rb") as fo:
                     imgdata = fo.read()
             else:
-                time.sleep(1.05)
-                try:
-                    req = urllib.request.Request(uri, data=None, headers=url_headers)
-                    imgdata = urllib.request.urlopen(req).read()
-                except urllib.error.HTTPError as err:
-                    print("Error fetching cover art")
-                    print("URL: ", uri)
-                    print(err.code, err.reason)
-                    print(err.headers)
-                    raise
+                count = 0
+                while (True):
+                    time.sleep(1.05)
+                    count = count + 1
+                    try:
+                        req = urllib.request.Request(uri, data=None, headers=url_headers)
+                        imgdata = urllib.request.urlopen(req).read()
+                        break
+                    except urllib.error.URLError as err:
+                        if (count < 5):
+                            continue
+                        else:
+                            raise
+                    except urllib.error.HTTPError as err:
+                        print("Error fetching cover art")
+                        print("URL: ", uri)
+                        print(err.code, err.reason)
+                        print(err.headers)
+                        raise
 
                 with open(util.userfile(hashuri), "wb") as fo:
                     fo.write(imgdata)

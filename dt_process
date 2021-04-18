@@ -242,7 +242,7 @@ try:
         print("Split multi-track .wav files...")
 
         with Pool(args.jobs) as p:
-            result = list(tqdm.tqdm(p.imap(poolsplit, split_wavs),
+            result = list(tqdm.tqdm(p.imap_unordered(poolsplit, split_wavs),
                                     total=len(split_wavs)))
 
         for res in result:
@@ -269,7 +269,7 @@ try:
     print("Tag/normalize/convert audio files...")
 
     with Pool(args.jobs) as p:
-        result = list(tqdm.tqdm(p.imap(process_track, tracks),
+        result = list(tqdm.tqdm(p.imap_unordered(process_track, tracks),
                                 total=len(tracks)))
 
 except:

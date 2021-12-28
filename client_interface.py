@@ -10,6 +10,7 @@ import time
 import urllib.request, urllib.error, urllib.parse
 import sys
 import multiprocessing
+import threading
 
 discogs_auth = util.userfile("discogs_auth")
 useragent = "discogstool/2.0"
@@ -76,19 +77,26 @@ def scrub_data(data):
         return data.strip()
     return data
 
+threadlocal = threading.local()
+
 class DiscogsRelease:
 
     def __getitem__(self, key):
         return self.data[key]
 
     def getData(self, rid):
+        db = getattr(threadlocal, "db", None)
+        if db is None:
+            db = database.DiscogsDatabase()
+            threadlocal.db = db
+
         key = "release-%d" % rid
-        data = database.get(key)
+        data = db.get(key)
         if data:
             if "tracklist" in data:
                 return data
             else:
-                database.delete(key)
+                db.delete(key)
 
         with discogs_lock:
             client = get_client_instance()
@@ -110,7 +118,7 @@ class DiscogsRelease:
                 raise ClientException("release %d couldn't be fetched" % rid)
 
         data = scrub_data(release.data)
-        database.put(key, data)
+        db.put(key, data)
 
         return data
 

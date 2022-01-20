@@ -101,9 +101,14 @@ def get_wav_regions(markers, rate, min_len):
 
 def split_wav_file(path, outdir, releaseid):
     rel = client_interface.DiscogsRelease(releaseid)
-    debug("split %s (%s)" % (path, rel))
+    debug("SPLIT %s (%s)" % (path, rel))
 
-    rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
+    try:
+        rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
+    except Exception:
+        print("Bad wav file %s?" % path)
+        raise
+
     debug("%d samples" % len(rdata))
     markers.extend([0, len(rdata)])
     markers.sort()
@@ -120,16 +125,23 @@ def split_wav_file(path, outdir, releaseid):
                     (len(regions), rel, path))
 
     created = []
+    pos_seen = []
     for i in range(rel.getTotalTracks()):
         start, end = regions[i]
         tdata = rdata[start:end]
         track = rel.getTrack(i)
         pos = track["position"]
+        if pos in pos_seen:
+            raise ConversionException("dupe pos %s in release %s fix on Discogs" %
+                (pos, rel))
+        else:
+            pos_seen.append(pos)
 
         filename = os.path.join(outdir, "%d.%s.wav" % (rel.getId(), pos))
         debug("Writing %s..." % filename)
         wavfile.write(filename, rate, tdata, bitrate=bits)
         created.append((track, filename, "wav", False))
+    debug("DONE %s (%s)" % (path, rel))
     return created
 
 def get_possible_positions(position):
@@ -227,7 +239,7 @@ solo_tracks = []
 split_wavs = []
 
 os.makedirs(args.outdir, exist_ok=True)
-tmpdir = tempfile.mkdtemp(dir=args.outdir)
+tmpdir = tempfile.mkdtemp()
 
 try:
     for path in files:

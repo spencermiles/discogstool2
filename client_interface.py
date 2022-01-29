@@ -11,6 +11,7 @@ import urllib.request, urllib.error, urllib.parse
 import sys
 import multiprocessing
 import threading
+import ctypes
 
 discogs_auth = util.userfile("discogs_auth")
 useragent = "discogstool/2.0"
@@ -194,7 +195,7 @@ class DiscogsRelease:
             return None
 
         uri = self.data["images"][0]["uri"]
-        hashuri = uri.rsplit("/",1)[-1]
+        hashuri = hex(ctypes.c_uint64(hash(uri)).value)
 
         with discogs_lock:
             if os.path.exists(util.userfile(hashuri)):

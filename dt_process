@@ -2,6 +2,7 @@
 
 import glob
 import argparse
+from posixpath import split
 import client_interface
 import re
 import sys
@@ -14,6 +15,7 @@ import subprocess
 import wavfile
 import multiprocessing
 import tqdm
+import platform
 from multiprocessing import Pool, TimeoutError
 
 release_regex = re.compile(r"[\[]r([0-9]+)[\]][.][a-zA-Z]+$")
@@ -60,7 +62,14 @@ def process_wav_file(path, outdir, track, copy):
         path = copy_to_tmp(path)
 
     debug("Normalizing...")
-    retval = subprocess.call(["normalize-audio", "-q", "-T", "1.5", "--peak",
+    norm_exe = "normalize-audio"
+    # Ubuntu calls it normalize-audio, but homebrew normalize. Same program.
+    if shutil.which(norm_exe) is None:
+        norm_exe = "normalize"
+        if shutil.which(norm_exe) is None:
+            raise ConversionException("missing normalize utility")
+
+    retval = subprocess.call([norm_exe, "-q", "-T", "1.5", "--peak",
 	    path])
     if retval:
         raise ConversionException("Normalization failed")
@@ -199,6 +208,7 @@ def get_release_and_track(releaseid, position):
     return None
 
 def process_track(trackinfo):
+    print(trackinfo)
     track, path, extension, copy = trackinfo
     outdir = args.outdir
 
@@ -229,7 +239,7 @@ parser.add_argument("-v", "--verbose", action="store_true",
                     help="Enable extra debug messages")
 parser.add_argument("-j", "--jobs", type=int,
                     default=multiprocessing.cpu_count(),
-                    help="Number of CPUs to use")
+                    help="Number of CPUs to use (only works on Linux)")
 
 args = parser.parse_args(sys.argv[1:])
 
@@ -240,6 +250,7 @@ split_wavs = []
 
 os.makedirs(args.outdir, exist_ok=True)
 tmpdir = tempfile.mkdtemp()
+is_linux = platform.system() == 'Linux'
 
 try:
     for path in files:
@@ -253,9 +264,17 @@ try:
     if split_wavs:
         print("Split multi-track .wav files...")
 
-        with Pool(args.jobs) as p:
-            result = list(tqdm.tqdm(p.imap_unordered(poolsplit, split_wavs),
-                                    total=len(split_wavs)))
+        if is_linux:
+            # multiprocessing "spawn" semantics not supported yet. "fork" isn't
+            # implemented in Windows and crashes macOS. Major changes to this
+            # code needed to get "spwan" up and running
+            with multiprocessing.get_context("fork").Pool(args.jobs) as p:
+                result = list(tqdm.tqdm(p.imap_unordered(poolsplit, split_wavs),
+                                        total=len(split_wavs)))
+        else:
+            result = []
+            for path, tmpdir, releaseid in split_wavs:
+                result.append(split_wav_file(path, tmpdir, releaseid))
 
         for res in result:
             tracks.extend(res)
@@ -280,12 +299,16 @@ try:
 
     print("Tag/normalize/convert audio files...")
 
-    with Pool(args.jobs) as p:
-        result = list(tqdm.tqdm(p.imap_unordered(process_track, tracks),
-                                total=len(tracks)))
+    if is_linux:
+        with Pool(args.jobs) as p:
+            result = list(tqdm.tqdm(p.imap_unordered(process_track, tracks),
+                                    total=len(tracks)))
+    else:
+        print(repr(tracks))
+        for trackinfo in tracks:
+            process_track(trackinfo)
 
 except:
     raise
 finally:
     shutil.rmtree(tmpdir, ignore_errors=True)
-

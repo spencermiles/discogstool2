@@ -95,7 +95,22 @@ def process_mp3_file(path, outdir, track, copy):
     tmpfil = copy_to_tmp(path)
     process_file(tmpfil, outdir, track)
 
+def get_wav_regions_from_markers(markerslist, file_length, rate, min_len):
+    """Build regions from markers that have explicit lengths (ltxt chunks)."""
+    regions = []
+    for m in markerslist:
+        start = m['position']
+        length = m.get('length', 0)
+        if length > 0:
+            end = start + length
+            duration = length / rate
+            if duration >= min_len:
+                debug("Region from ltxt: (%d, %d), %d seconds" % (start, end, duration))
+                regions.append((start, end))
+    return regions
+
 def get_wav_regions(markers, rate, min_len):
+    """Build regions from consecutive marker positions (fallback)."""
     regions = []
     for i in range(len(markers) - 1):
         start = markers[i]     # inclusive
@@ -113,25 +128,57 @@ def split_wav_file(path, outdir, releaseid):
     debug("SPLIT %s (%s)" % (path, rel))
 
     try:
-        rate, rdata, bits, markers = wavfile.read(path, readmarkers=True)
+        rate, rdata, bits, markers, markerslist, loops = wavfile.read(path, readmarkers=True, readmarkerslist=True, readloops=True)
     except Exception:
         print("Bad wav file %s?" % path)
         raise
 
     debug("%d samples" % len(rdata))
-    markers.extend([0, len(rdata)])
-    markers.sort()
+    file_length = len(rdata)
+    debug("Markerslist:", markerslist)
+    debug("Loops (smpl chunk):", loops)
 
-    debug("Markers:", markers)
-    regions = get_wav_regions(markers, rate, 30)
+    # First, try to use loops from smpl chunk (Reaper exports regions as loops)
+    regions = []
+    for start, end in loops:
+        duration = (end - start) / rate
+        if duration >= 30:
+            debug("Region from smpl loop: (%d, %d), %d seconds" % (start, end, int(duration)))
+            regions.append((start, end))
 
     if len(regions) != rel.getTotalTracks():
-        # Try again with smaller second gaps
-        # Thanks, Giegling 20 and STL
-        regions = get_wav_regions(markers, rate, 6)
+        # Try with smaller minimum duration
+        regions = []
+        for start, end in loops:
+            duration = (end - start) / rate
+            if duration >= 6:
+                debug("Region from smpl loop: (%d, %d), %d seconds" % (start, end, int(duration)))
+                regions.append((start, end))
+
+    # Next, try explicit region lengths from ltxt chunks
+    if len(regions) != rel.getTotalTracks():
+        regions = get_wav_regions_from_markers(markerslist, file_length, rate, 30)
         if len(regions) != rel.getTotalTracks():
-            raise ConversionException("Unexpected region count %d in %s (%s)" % 
-                    (len(regions), rel, path))
+            regions = get_wav_regions_from_markers(markerslist, file_length, rate, 6)
+
+    # Fall back to consecutive marker positions if no ltxt regions found
+    if len(regions) != rel.getTotalTracks():
+        debug("No ltxt regions, falling back to marker positions")
+        markers = list(markers)  # copy
+        markers.extend([0, file_length])
+        markers.sort()
+
+        debug("Markers:", markers)
+        regions = get_wav_regions(markers, rate, 30)
+
+        if len(regions) != rel.getTotalTracks():
+            # Try again with smaller second gaps
+            # Thanks, Giegling 20 and STL
+            regions = get_wav_regions(markers, rate, 6)
+
+    if len(regions) != rel.getTotalTracks():
+        raise ConversionException("Unexpected region count %d in %s (%s)" %
+                (len(regions), rel, path))
 
     created = []
     pos_seen = []

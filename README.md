@@ -56,52 +56,54 @@ You need a Discogs account. On first run, the tool will:
 
 ## Recording Workflow
 
-**Important**: This tool does NOT record audio from your turntable. It's a post-processing tool that works with audio files you've already captured. Here's the complete workflow:
+**Important**: This tool does NOT record audio from your turntable. It's a post-processing tool that works with audio files you've already captured using [Reaper](https://www.reaper.fm/).
 
 ### Step 1: Record the Vinyl
 
-Use audio recording software like **Audacity** (free, cross-platform):
-
 1. Connect your turntable to your computer via audio interface/USB
-2. Open Audacity and start recording
-3. Play the entire side of the record
+2. Create a new Reaper project and set up your audio input
+3. Record the entire side of the vinyl as a single take
 4. Stop recording when the side finishes
 
-### Step 2: Add Cue Markers (Recommended Method)
+### Step 2: Create Regions for Track Boundaries
 
-For the best workflow, mark where each track starts:
+**Important**: Use **Regions**, not just markers. Regions define both the start AND end of each track, allowing for precise boundaries even when there's silence between tracks.
 
-1. In Audacity, listen through and place a **label** (Ctrl+B or Cmd+B) at the beginning of each track
-2. The label names don't matter - the tool only uses their positions
-3. You should have one label per track on the release
+1. Select the audio range for the first track by clicking and dragging
+2. Press **Shift+R** (or right-click → Create Region from Selection)
+3. Repeat for each track on the recording
+4. Region names are optional - the tool only uses the boundaries
+
+#### Why Regions Matter
+
+If you only place markers at track starts (without defining regions), the tool will assume each track runs until the next marker. This causes problems when there's silence between tracks:
+
+- **Without regions**: A 4-minute track followed by 1 minute of silence would be exported as 5 minutes
+- **With regions**: The track is cut precisely at the region boundary you defined
 
 ### Step 3: Export the Audio
 
-**Option A: Multi-track WAV (Recommended)**
-1. File → Export → Export Audio
-2. Choose WAV format
+1. **File → Render** (or Ctrl+Alt+R)
+2. Set Output Format to **WAV**
 3. Name the file: `[r{RELEASE_ID}].wav`
    - Example: `[r12345678].wav`
    - Find the release ID from the Discogs URL: `https://www.discogs.com/release/12345678-...`
-4. The cue markers will be embedded in the WAV file
+4. Under **"Embed metadata"** or **"Include"**, ensure these are enabled:
+   - **"Write markers + regions"** - Critical for track splitting
+5. Click **Render**
 
-**Option B: Individual Track Files**
-1. Select the audio for each track individually
-2. File → Export → Export Selected Audio
-3. Name each file: `{RELEASE_ID}{POSITION}.wav`
-   - Examples: `12345678A1.wav`, `12345678A2.wav`, `12345678B1.wav`
-4. No cue markers needed with this method
+The regions are stored in the WAV file's `smpl` chunk as loop points, which dt_process reads to determine track boundaries.
 
 ### Step 4: Process with dt_process
 
-Now use this tool to split (if needed), normalize, tag, and organize:
+Now use this tool to split, normalize, tag, and organize:
 
 ```bash
 ./dt_process -o ~/Music/Processed '[r12345678].wav'
 ```
 
 The tool will:
-- Split the WAV using your cue markers (Option A) or process individual files (Option B)
+- Split the WAV using your regions
 - Fetch metadata from Discogs
 - Normalize audio levels
 - Convert to AIFF format
@@ -109,13 +111,14 @@ The tool will:
 - Tag with all metadata (artist, title, year, label, etc.)
 - Rename files appropriately
 
-### Alternative Recording Software
+### Alternative: Individual Track Files
 
-You can use any audio recording software that supports:
-- WAV export (required)
-- Cue markers/labels (optional, for multi-track workflow)
+Instead of using regions, you can export each track separately:
 
-Examples: Adobe Audition, Reaper, Sound Forge, GarageBand, etc.
+1. Select the audio for each track individually
+2. Export each as: `{RELEASE_ID}{POSITION}.wav`
+   - Examples: `12345678A1.wav`, `12345678A2.wav`, `12345678B1.wav`
+3. No regions needed with this method
 
 ## Usage
 
@@ -174,8 +177,9 @@ Split and process a multi-track WAV file:
 
 #### What dt_process Does
 
-1. **For WAV files with cue markers** (named `[rXXXX].wav`):
-   - Reads cue markers from the WAV file
+1. **For WAV files with regions** (named `[rXXXX].wav`):
+   - Reads regions from the `smpl` chunk (Reaper exports regions as loop points)
+   - Falls back to consecutive cue marker positions if no regions found
    - Splits into individual tracks (minimum 30 seconds, or 6 seconds for releases with many short tracks)
    - Creates temporary files named `{RELEASE_ID}.{POSITION}.wav`
 
@@ -277,7 +281,7 @@ The tool handles various track position formats:
 ## Limitations
 
 - **Multiprocessing**: Parallel processing (`-j` option) only works on Linux due to multiprocessing limitations on macOS/Windows
-- **Cue Markers**: Multi-track WAV splitting requires properly formatted cue markers in the WAV file
+- **Regions**: Multi-track WAV splitting requires regions exported from Reaper (stored in the `smpl` chunk)
 - **API Rate Limiting**: Discogs API has rate limits (the tool includes delays to handle this)
 - **File Format**: Only processes files in supported formats (WAV, FLAC, MP3, M4A, AAC, AIFF)
 
@@ -292,9 +296,15 @@ The tool handles various track position formats:
 - The release may have been deleted or merged on Discogs
 
 **"Unexpected region count"**
-- The number of cue markers doesn't match the track count on Discogs
-- Verify your cue markers are correct
+- The number of detected regions doesn't match the track count on Discogs
+- Ensure you created regions (Shift+R), not just markers
 - Check that the Discogs tracklist is accurate
+- Run with `-v` to see which regions are being detected and their durations
+
+**Tracks include unwanted silence at the end**
+- You're using markers instead of regions - the tool is using the next marker as the track end
+- In Reaper: use regions (Shift+R) to define precise start and end points for each track
+- Make sure "Write markers + regions" is enabled when rendering
 
 **"Couldn't find position X in release Y"**
 - The track position in your filename doesn't exist in the Discogs release

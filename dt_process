@@ -8,6 +8,7 @@ import re
 import sys
 import os
 import time
+import json
 import libtags
 import tempfile
 import shutil
@@ -53,6 +54,72 @@ def process_file(path, outdir, track):
     dest = af.rename_file(outdir, args.verbose, False, True, False)
     debug("Renamed %s -> %s:" % (path, dest))
 
+# Two-pass EBU R128 loudness normalization using ffmpeg
+# Returns path to normalized file (tmpaiff)
+def normalize_loudnorm(path, tmpaiff):
+    debug("Analyzing loudness (pass 1)...")
+
+    # Pass 1: Analyze the file
+    result = subprocess.run([
+        "ffmpeg", "-hide_banner", "-i", path,
+        "-af", "loudnorm=I=-14:TP=-1:LRA=11:print_format=json",
+        "-f", "null", "-"
+    ], capture_output=True, text=True)
+
+    # Parse the JSON output from stderr (ffmpeg outputs to stderr)
+    # The JSON is at the end of the output after the loudnorm stats
+    output = result.stderr
+    json_start = output.rfind('{')
+    json_end = output.rfind('}') + 1
+    if json_start == -1 or json_end == 0:
+        raise ConversionException("Failed to parse loudnorm analysis output")
+
+    try:
+        stats = json.loads(output[json_start:json_end])
+    except json.JSONDecodeError as e:
+        debug("loudnorm output:", output)
+        raise ConversionException(f"Failed to parse loudnorm JSON: {e}")
+
+    debug("Loudness stats:", stats)
+
+    # Pass 2: Apply normalization with measured values and convert to AIFF
+    debug("Normalizing and converting to 44.1/16 AIFF (pass 2)...")
+
+    loudnorm_filter = (
+        f"loudnorm=I=-14:TP=-1:LRA=11:"
+        f"measured_I={stats['input_i']}:"
+        f"measured_TP={stats['input_tp']}:"
+        f"measured_LRA={stats['input_lra']}:"
+        f"measured_thresh={stats['input_thresh']}:"
+        f"offset={stats['target_offset']}:"
+        f"linear=true"
+    )
+
+    retval = subprocess.call([
+        "ffmpeg", "-hide_banner", "-loglevel", "panic",
+        "-y", "-i", path,
+        "-af", loudnorm_filter,
+        "-sample_fmt", "s16", "-ar", "44100",
+        tmpaiff
+    ])
+
+    if retval:
+        raise ConversionException("Loudnorm normalization failed")
+
+# Legacy peak normalization using normalize-audio
+def normalize_legacy(path):
+    debug("Normalizing (legacy peak mode)...")
+    norm_exe = "normalize-audio"
+    # Ubuntu calls it normalize-audio, but homebrew normalize. Same program.
+    if shutil.which(norm_exe) is None:
+        norm_exe = "normalize"
+        if shutil.which(norm_exe) is None:
+            raise ConversionException("missing normalize utility")
+
+    retval = subprocess.call([norm_exe, "-q", "-T", "1.5", "--peak", path])
+    if retval:
+        raise ConversionException("Normalization failed")
+
 # if copy, don't do anything the modifies in place
 # if not copy, delete path when we are done
 def process_wav_file(path, outdir, track, copy):
@@ -61,25 +128,18 @@ def process_wav_file(path, outdir, track, copy):
     if copy:
         path = copy_to_tmp(path)
 
-    debug("Normalizing...")
-    norm_exe = "normalize-audio"
-    # Ubuntu calls it normalize-audio, but homebrew normalize. Same program.
-    if shutil.which(norm_exe) is None:
-        norm_exe = "normalize"
-        if shutil.which(norm_exe) is None:
-            raise ConversionException("missing normalize utility")
+    if args.legacy_normalize:
+        normalize_legacy(path)
+        debug("Converting to 44.1/16 AIFF...")
+        retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
+                "-y",  "-i", path, "-sample_fmt", "s16", "-ar", "44100",
+                tmpaiff])
+        if retval:
+            raise ConversionException("Encoding failed")
+    else:
+        # EBU R128 loudnorm (default) - normalizes and converts in one step
+        normalize_loudnorm(path, tmpaiff)
 
-    retval = subprocess.call([norm_exe, "-q", "-T", "1.5", "--peak",
-	    path])
-    if retval:
-        raise ConversionException("Normalization failed")
-
-    debug("Converting to 44.1/16 AIFF...")
-    retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
-            "-y",  "-i", path, "-sample_fmt", "s16", "-ar", "44100",
-            tmpaiff])
-    if retval:
-        raise ConversionException("Encoding failed")
     process_file(tmpaiff, outdir, track)
 
 def process_flac_file(path, outdir, track):
@@ -287,6 +347,8 @@ parser.add_argument("-v", "--verbose", action="store_true",
 parser.add_argument("-j", "--jobs", type=int,
                     default=multiprocessing.cpu_count(),
                     help="Number of CPUs to use (only works on Linux)")
+parser.add_argument("--legacy-normalize", action="store_true",
+                    help="Use legacy peak normalization instead of EBU R128 loudnorm")
 
 args = parser.parse_args(sys.argv[1:])
 

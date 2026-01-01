@@ -9,8 +9,8 @@ discogstool2 helps you process audio recordings from vinyl records and automatic
 ## Features
 
 - **Automatic Metadata Tagging**: Fetches release and track information from Discogs API
-- **Multi-track WAV Splitting**: Automatically splits single WAV files into individual tracks using cue markers
-- **Audio Processing**: Normalizes volume levels and converts to AIFF format
+- **Multi-track WAV Splitting**: Automatically splits single WAV files into individual tracks using regions
+- **Audio Processing**: EBU R128 loudness normalization (immune to vinyl pops) and converts to AIFF format
 - **Collection Management**: Compare your local files against your Discogs collection
 - **Cover Art**: Automatically downloads and embeds album artwork
 - **Format Support**: Handles WAV, FLAC, MP3, M4A, AAC, and AIFF files
@@ -22,9 +22,9 @@ discogstool2 helps you process audio recordings from vinyl records and automatic
 
 You need the following command-line tools installed:
 
-- **ffmpeg**: Audio conversion (`brew install ffmpeg` on macOS, `apt install ffmpeg` on Ubuntu)
-- **normalize-audio** or **normalize**: Audio normalization (`brew install normalize` on macOS, `apt install normalize-audio` on Ubuntu)
+- **ffmpeg**: Audio conversion and normalization (`brew install ffmpeg` on macOS, `apt install ffmpeg` on Ubuntu)
 - **flac**: FLAC decoding (`brew install flac` on macOS, `apt install flac` on Ubuntu)
+- **normalize-audio** or **normalize**: (Optional) Only needed if using `--legacy-normalize` flag (`brew install normalize` on macOS, `apt install normalize-audio` on Ubuntu)
 
 ### Python Dependencies
 
@@ -157,6 +157,7 @@ Example:
 - `-o, --outdir` (required): Output directory for processed files
 - `-v, --verbose`: Enable debug messages
 - `-j, --jobs N`: Number of parallel jobs (default: CPU count, Linux only)
+- `--legacy-normalize`: Use legacy peak normalization instead of EBU R128 (see Normalization below)
 
 #### Examples
 
@@ -185,10 +186,23 @@ Split and process a multi-track WAV file:
 
 2. **For all audio files**:
    - Fetches metadata from Discogs (artist, album, track title, year, genre, label, etc.)
-   - For WAV/FLAC: Normalizes audio to -1.5dB peak, converts to 44.1kHz/16-bit AIFF
+   - For WAV/FLAC: Normalizes audio using EBU R128 loudnorm, converts to 44.1kHz/16-bit AIFF
    - For MP3: Copies and tags without re-encoding
    - Embeds cover artwork
    - Renames files to: `{ARTIST} - {TITLE} {TRACK_NUM} [{LABEL}].{ext}`
+
+### Normalization
+
+By default, dt_process uses **EBU R128 loudness normalization** (via ffmpeg's loudnorm filter), which is ideal for vinyl digitization:
+
+- **Target**: -14 LUFS integrated loudness (standard for electronic/DJ music)
+- **True Peak Limit**: -1 dBTP (prevents digital clipping)
+- **Two-pass processing**: Analyzes first, then applies precise normalization
+- **Linear mode**: No dynamic compression, only gain adjustment + peak limiting
+
+**Why this matters for vinyl**: Traditional peak normalization can be fooled by vinyl pops/clicks. A single loud pop becomes the "peak", preventing the actual music from being normalized properly. EBU R128 measures integrated loudness over time, so short transients (pops) don't affect the calculation. The true peak limiter catches any pops that would clip, while the music passes through with only gain adjustment.
+
+**Legacy mode**: Use `--legacy-normalize` to use the old peak-based normalization (requires normalize-audio/normalize utility). This normalizes to -1.5dB peak, which may result in quieter tracks if vinyl pops are present.
 
 ### Managing Your Collection (dt_collection)
 
@@ -288,7 +302,9 @@ The tool handles various track position formats:
 ## Troubleshooting
 
 **"missing normalize utility"**
+- This only occurs when using `--legacy-normalize`
 - Install normalize-audio (Ubuntu) or normalize (macOS)
+- Or remove the `--legacy-normalize` flag to use the default EBU R128 normalization (recommended)
 
 **"Release XXXXX not found"**
 - Verify the release ID exists on Discogs

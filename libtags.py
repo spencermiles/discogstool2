@@ -211,8 +211,9 @@ class AudioFile(object):
             newfn = sanitize("[%03d] %s - %s %d (%s).%s" % 
                     (bpm, af["artist"], af["title"], af["track"][0], af["year"], ext))
         else:
-            newfn = sanitize("%s - %s %d [%s].%s" %
-                    (af["artist"], af["title"], af["track"][0], af["label"], ext))
+            catno = self.track.release.getCatno()
+            newfn = sanitize("%s - %d - %s - %s [%s].%s" %
+                    (af["album"], af["track"][0], af["artist"], af["title"], catno, ext))
 
         newpath = os.path.abspath(os.path.join(newdir, newfn))
         if not os.path.exists(newpath) or not filecmp.cmp(self.filename, newpath):

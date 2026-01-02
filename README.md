@@ -156,7 +156,7 @@ Example:
 
 - `-o, --outdir` (required): Output directory for processed files
 - `-v, --verbose`: Enable debug messages
-- `-j, --jobs N`: Number of parallel jobs (default: CPU count, Linux only)
+- `-j, --jobs N`: Number of parallel normalization jobs (default: CPU count)
 - `--legacy-normalize`: Use legacy peak normalization instead of EBU R128 (see Normalization below)
 
 #### Examples
@@ -294,7 +294,6 @@ The tool handles various track position formats:
 
 ## Limitations
 
-- **Multiprocessing**: Parallel processing (`-j` option) only works on Linux due to multiprocessing limitations on macOS/Windows
 - **Regions**: Multi-track WAV splitting requires regions exported from Reaper (stored in the `smpl` chunk)
 - **API Rate Limiting**: Discogs API has rate limits (the tool includes delays to handle this)
 - **File Format**: Only processes files in supported formats (WAV, FLAC, MP3, M4A, AAC, AIFF)

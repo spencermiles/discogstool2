@@ -26,8 +26,21 @@ pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
 class ConversionException(Exception):
     pass
 
+# Worker process configuration (set by pool initializer for spawn context)
+worker_config = {
+    'verbose': False,
+    'legacy_normalize': False,
+    'outdir': None,
+    'tmpdir': None
+}
+
+def worker_init(config):
+    """Initialize worker process with shared configuration."""
+    global worker_config
+    worker_config = config
+
 def debug(*strs):
-    if not args.verbose:
+    if not worker_config['verbose']:
         return
     print(multiprocessing.current_process().name, strs)
 
@@ -35,7 +48,7 @@ def file_extension(path):
     return "." + path.rsplit(".", 1)[1]
 
 def new_tmp(ext):
-    fo, tmppath = tempfile.mkstemp(suffix=ext, dir=tmpdir)
+    fo, tmppath = tempfile.mkstemp(suffix=ext, dir=worker_config['tmpdir'])
     os.close(fo)
     debug("New temp %s file: %s" % (ext, tmppath))
     return tmppath
@@ -51,7 +64,7 @@ def copy_to_tmp(path):
 def process_file(path, outdir, track):
     af = libtags.AudioFile(path, track)
     af.commit()
-    dest = af.rename_file(outdir, args.verbose, False, True, False)
+    dest = af.rename_file(outdir, worker_config['verbose'], False, True, False)
     debug("Renamed %s -> %s:" % (path, dest))
 
 # Two-pass EBU R128 loudness normalization using ffmpeg
@@ -128,7 +141,7 @@ def process_wav_file(path, outdir, track, copy):
     if copy:
         path = copy_to_tmp(path)
 
-    if args.legacy_normalize:
+    if worker_config['legacy_normalize']:
         normalize_legacy(path)
         debug("Converting to 44.1/16 AIFF...")
         retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
@@ -317,7 +330,7 @@ def get_release_and_track(releaseid, position):
 def process_track(trackinfo):
     print(trackinfo)
     track, path, extension, copy = trackinfo
-    outdir = args.outdir
+    outdir = worker_config['outdir']
 
     debug(path, "-->", track)
 
@@ -325,7 +338,7 @@ def process_track(trackinfo):
         process_wav_file(path, outdir, track, copy)
     elif extension == "flac":
         process_flac_file(path, outdir, track)
-    elif exten3sion == "mp3":
+    elif extension == "mp3":
         process_mp3_file(path, outdir, track, copy)
     else:
         print("Don't know how to handle", path)
@@ -346,78 +359,85 @@ parser.add_argument("-v", "--verbose", action="store_true",
                     help="Enable extra debug messages")
 parser.add_argument("-j", "--jobs", type=int,
                     default=multiprocessing.cpu_count(),
-                    help="Number of CPUs to use (only works on Linux)")
+                    help="Number of parallel jobs for normalization (default: CPU count)")
 parser.add_argument("--legacy-normalize", action="store_true",
                     help="Use legacy peak normalization instead of EBU R128 loudnorm")
 
-args = parser.parse_args(sys.argv[1:])
+def main():
+    args = parser.parse_args(sys.argv[1:])
 
-tracks = []
-files = args.files
-solo_tracks = []
-split_wavs = []
+    tracks = []
+    files = args.files
+    solo_tracks = []
+    split_wavs = []
 
-os.makedirs(args.outdir, exist_ok=True)
-tmpdir = tempfile.mkdtemp()
-is_linux = platform.system() == 'Linux'
+    os.makedirs(args.outdir, exist_ok=True)
+    tmpdir = tempfile.mkdtemp()
 
-try:
-    for path in files:
-        filename = os.path.basename(path)
-        m = release_regex.match(filename)
-        if not m:
-            continue
-        releaseid = int(m.group(1))
-        split_wavs.append((path, tmpdir, releaseid))
+    # Initialize worker config for main process and workers
+    worker_config.update({
+        'verbose': args.verbose,
+        'legacy_normalize': args.legacy_normalize,
+        'outdir': args.outdir,
+        'tmpdir': tmpdir
+    })
 
-    if split_wavs:
-        print("Split multi-track .wav files...")
+    try:
+        for path in files:
+            filename = os.path.basename(path)
+            m = release_regex.match(filename)
+            if not m:
+                continue
+            releaseid = int(m.group(1))
+            split_wavs.append((path, tmpdir, releaseid))
 
-        if is_linux:
-            # multiprocessing "spawn" semantics not supported yet. "fork" isn't
-            # implemented in Windows and crashes macOS. Major changes to this
-            # code needed to get "spwan" up and running
-            with multiprocessing.get_context("fork").Pool(args.jobs) as p:
-                result = list(tqdm.tqdm(p.imap_unordered(poolsplit, split_wavs),
-                                        total=len(split_wavs)))
-        else:
+        if split_wavs:
+            print("Split multi-track .wav files...")
+            # Splitting is I/O bound and uses numpy, run sequentially
             result = []
-            for path, tmpdir, releaseid in split_wavs:
-                result.append(split_wav_file(path, tmpdir, releaseid))
+            for path, td, releaseid in split_wavs:
+                result.append(split_wav_file(path, td, releaseid))
 
-        for res in result:
-            tracks.extend(res)
+            for res in result:
+                tracks.extend(res)
 
-    for path in files:
-        filename = os.path.basename(path)
-        m = fregex.match(filename)
-        if not m:
-            debug('Skipping', filename)
-            continue
-        releaseid = m.group(1)
-        extension = m.group(5)
-        position = m.group(3).upper() if m.group(3) else m.group(4)
-        extension = extension.lower()
-        releaseid = int(releaseid)
+        for path in files:
+            filename = os.path.basename(path)
+            m = fregex.match(filename)
+            if not m:
+                debug('Skipping', filename)
+                continue
+            releaseid = m.group(1)
+            extension = m.group(5)
+            position = m.group(3).upper() if m.group(3) else m.group(4)
+            extension = extension.lower()
+            releaseid = int(releaseid)
 
-        track = get_release_and_track(releaseid, position)
-        if not track:
-            print("Couldn't look up", filename)
-            sys.exit(1)
-        tracks.append((track, path, extension, True))
+            track = get_release_and_track(releaseid, position)
+            if not track:
+                print("Couldn't look up", filename)
+                sys.exit(1)
+            tracks.append((track, path, extension, True))
 
-    print("Tag/normalize/convert audio files...")
+        print("Tag/normalize/convert audio files...")
 
-    if is_linux:
-        with Pool(args.jobs) as p:
-            result = list(tqdm.tqdm(p.imap_unordered(process_track, tracks),
-                                    total=len(tracks)))
-    else:
-        print(repr(tracks))
-        for trackinfo in tracks:
-            process_track(trackinfo)
+        if len(tracks) > 1:
+            # Parallel processing using spawn context (works on all platforms)
+            with multiprocessing.get_context("spawn").Pool(
+                    args.jobs,
+                    initializer=worker_init,
+                    initargs=(worker_config,)) as p:
+                result = list(tqdm.tqdm(p.imap_unordered(process_track, tracks),
+                                        total=len(tracks)))
+        else:
+            # Single track, no need for pool overhead
+            for trackinfo in tracks:
+                process_track(trackinfo)
 
-except:
-    raise
-finally:
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    except:
+        raise
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+if __name__ == '__main__':
+    main()

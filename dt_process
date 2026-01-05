@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 
+import warnings
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
+
+# Patch resource_tracker to suppress semaphore warnings at shutdown
+# (warnings.filterwarnings doesn't work because these come from a subprocess)
+try:
+    from multiprocessing import resource_tracker
+    _original_warn = resource_tracker.warnings.warn
+    def _patched_warn(msg, *args, **kwargs):
+        if "semaphore" not in str(msg):
+            _original_warn(msg, *args, **kwargs)
+    resource_tracker.warnings.warn = _patched_warn
+except Exception:
+    pass
+
 import glob
 import argparse
 from posixpath import split
@@ -19,7 +34,7 @@ import tqdm
 import platform
 from multiprocessing import Pool, TimeoutError
 
-release_regex = re.compile(r"[\[]r([0-9]+)[\]][.][a-zA-Z]+$")
+release_regex = re.compile(r"[\[]r ?([0-9]+)[\]][.][a-zA-Z]+$")
 fregex = re.compile(r"([0-9]+)(([a-zA-Z)+[0-9]*)|[.]([a-zA-Z0-9. ]+))[.]([a-zA-Z]+)$")
 pregex = re.compile(r"([a-zA-Z]+)([0-9]+)")
 
@@ -328,10 +343,10 @@ def get_release_and_track(releaseid, position):
     return None
 
 def process_track(trackinfo):
-    print(trackinfo)
     track, path, extension, copy = trackinfo
     outdir = worker_config['outdir']
 
+    tqdm.tqdm.write(f"Processing: {track.getArtist()} - {track.getTitle()}")
     debug(path, "-->", track)
 
     if extension == "wav":

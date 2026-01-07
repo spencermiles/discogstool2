@@ -46,7 +46,14 @@ worker_config = {
     'verbose': False,
     'legacy_normalize': False,
     'outdir': None,
-    'tmpdir': None
+    'tmpdir': None,
+    'format': 'alac'
+}
+
+# Format configuration
+FORMAT_CONFIG = {
+    'aiff': {'ext': '.aiff', 'codec': 'pcm_s16be', 'sample_fmt': 's16'},
+    'alac': {'ext': '.m4a', 'codec': 'alac', 'sample_fmt': 's16p'},
 }
 
 def worker_init(config):
@@ -83,8 +90,8 @@ def process_file(path, outdir, track):
     debug("Renamed %s -> %s:" % (path, dest))
 
 # Two-pass EBU R128 loudness normalization using ffmpeg
-# Returns path to normalized file (tmpaiff)
-def normalize_loudnorm(path, tmpaiff):
+# Returns path to normalized file (tmpout)
+def normalize_loudnorm(path, tmpout):
     debug("Analyzing loudness (pass 1)...")
 
     # Pass 1: Analyze the file
@@ -110,8 +117,9 @@ def normalize_loudnorm(path, tmpaiff):
 
     debug("Loudness stats:", stats)
 
-    # Pass 2: Apply normalization with measured values and convert to AIFF
-    debug("Normalizing and converting to 44.1/16 AIFF (pass 2)...")
+    # Pass 2: Apply normalization with measured values and convert to output format
+    fmt = FORMAT_CONFIG[worker_config['format']]
+    debug(f"Normalizing and converting to 44.1/16 {worker_config['format'].upper()} (pass 2)...")
 
     loudnorm_filter = (
         f"loudnorm=I=-14:TP=-1:LRA=11:"
@@ -123,13 +131,15 @@ def normalize_loudnorm(path, tmpaiff):
         f"linear=true"
     )
 
-    retval = subprocess.call([
+    cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "panic",
         "-y", "-i", path,
         "-af", loudnorm_filter,
-        "-sample_fmt", "s16", "-ar", "44100",
-        tmpaiff
-    ])
+        "-acodec", fmt['codec'], "-sample_fmt", fmt['sample_fmt'], "-ar", "44100",
+        tmpout
+    ]
+
+    retval = subprocess.call(cmd)
 
     if retval:
         raise ConversionException("Loudnorm normalization failed")
@@ -151,24 +161,27 @@ def normalize_legacy(path):
 # if copy, don't do anything the modifies in place
 # if not copy, delete path when we are done
 def process_wav_file(path, outdir, track, copy):
-    tmpaiff = new_tmp(".aiff")
+    fmt = FORMAT_CONFIG[worker_config['format']]
+    tmpout = new_tmp(fmt['ext'])
 
     if copy:
         path = copy_to_tmp(path)
 
     if worker_config['legacy_normalize']:
         normalize_legacy(path)
-        debug("Converting to 44.1/16 AIFF...")
-        retval = subprocess.call(["ffmpeg", "-hide_banner", "-loglevel", "panic",
-                "-y",  "-i", path, "-sample_fmt", "s16", "-ar", "44100",
-                tmpaiff])
+        debug(f"Converting to 44.1/16 {worker_config['format'].upper()}...")
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "panic",
+                "-y", "-i", path,
+                "-acodec", fmt['codec'], "-sample_fmt", fmt['sample_fmt'], "-ar", "44100",
+                tmpout]
+        retval = subprocess.call(cmd)
         if retval:
             raise ConversionException("Encoding failed")
     else:
         # EBU R128 loudnorm (default) - normalizes and converts in one step
-        normalize_loudnorm(path, tmpaiff)
+        normalize_loudnorm(path, tmpout)
 
-    process_file(tmpaiff, outdir, track)
+    process_file(tmpout, outdir, track)
 
 def process_flac_file(path, outdir, track):
     tmpwav = new_tmp(".wav")
@@ -377,6 +390,8 @@ parser.add_argument("-j", "--jobs", type=int,
                     help="Number of parallel jobs for normalization (default: CPU count)")
 parser.add_argument("--legacy-normalize", action="store_true",
                     help="Use legacy peak normalization instead of EBU R128 loudnorm")
+parser.add_argument("-f", "--format", choices=["aiff", "alac"], default="alac",
+                    help="Output format (default: alac)")
 
 def main():
     args = parser.parse_args(sys.argv[1:])
@@ -394,7 +409,8 @@ def main():
         'verbose': args.verbose,
         'legacy_normalize': args.legacy_normalize,
         'outdir': args.outdir,
-        'tmpdir': tmpdir
+        'tmpdir': tmpdir,
+        'format': args.format
     })
 
     try:

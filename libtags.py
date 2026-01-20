@@ -71,8 +71,9 @@ def track_from_comment(comment, index):
 
 
 class AudioFile(object):
-    def __init__(self, filename, track=None):
+    def __init__(self, filename, track=None, write_genre=False):
         self.filename = filename
+        self.write_genre = write_genre
         self.obj = mutagen.File(filename)
         if self.obj == None:
             raise TagsException("mutagen couldn't open " + filename)
@@ -139,8 +140,8 @@ class AudioFile(object):
                 release.getCatno(), release.getId())
         self["label"] = release.getLabel()
         self["track"] = (track.getTrackNumber(), release.getTotalTracks())
-        # Don't overwrite Genre set already
-        if not self["genre"]:
+        # Only write genre if explicitly requested and not already set
+        if self.write_genre and not self["genre"]:
             self["genre"] = release.getGenre()
         if "image" not in list(self.keys()):
             i = release.getArtwork()

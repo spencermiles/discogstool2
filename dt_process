@@ -47,7 +47,8 @@ worker_config = {
     'legacy_normalize': False,
     'outdir': None,
     'tmpdir': None,
-    'format': 'alac'
+    'format': 'aiff',
+    'write_genre': False
 }
 
 # Format configuration
@@ -84,7 +85,7 @@ def copy_to_tmp(path):
 
 # Moves file to new filename with metadata applied
 def process_file(path, outdir, track):
-    af = libtags.AudioFile(path, track)
+    af = libtags.AudioFile(path, track, write_genre=worker_config['write_genre'])
     af.commit()
     dest = af.rename_file(outdir, worker_config['verbose'], False, True, False)
     debug("Renamed %s -> %s:" % (path, dest))
@@ -390,8 +391,10 @@ parser.add_argument("-j", "--jobs", type=int,
                     help="Number of parallel jobs for normalization (default: CPU count)")
 parser.add_argument("--legacy-normalize", action="store_true",
                     help="Use legacy peak normalization instead of EBU R128 loudnorm")
-parser.add_argument("-f", "--format", choices=["aiff", "alac"], default="alac",
-                    help="Output format (default: alac)")
+parser.add_argument("-f", "--format", choices=["aiff", "alac"], default="aiff",
+                    help="Output format (default: aiff)")
+parser.add_argument("--write-genre", action="store_true",
+                    help="Write genre metadata from Discogs (disabled by default)")
 
 def main():
     args = parser.parse_args(sys.argv[1:])
@@ -410,7 +413,8 @@ def main():
         'legacy_normalize': args.legacy_normalize,
         'outdir': args.outdir,
         'tmpdir': tmpdir,
-        'format': args.format
+        'format': args.format,
+        'write_genre': args.write_genre
     })
 
     try:
